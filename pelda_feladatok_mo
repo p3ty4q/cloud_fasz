@@ -1,0 +1,312 @@
+A fájlban szereplő feladatok megoldásához lépésről lépésre haladunk. A Kubernetes és AWS szolgáltatásokkal kapcsolatos kérdések megoldásához részletes parancsokat és kódokat adok, ahol szükséges. Kezdjük a Kubernetes kérdésekkel.
+
+### Kubernetes Feladatok
+
+#### 1. **Hány szolgáltatás van az alapértelmezett névtérben?**
+```bash
+kubectl get services -n default
+```
+Ez a parancs kiírja az alapértelmezett (`default`) névtérben lévő szolgáltatásokat. A lista alapján számold meg a sorokat.
+
+#### 2. **Hány konténer fut az egész klaszterben (minden névtérben)?**
+```bash
+kubectl get pods --all-namespaces -o jsonpath="{.items[*].spec.containers[*].name}" | wc -w
+```
+Ez a parancs az összes névtér összes podjának konténereit számolja meg.
+
+#### 3. **Hány pod szolgálja ki a `my-service` nevű szolgáltatást?**
+```bash
+kubectl get endpoints my-service -n default -o jsonpath="{.subsets[*].addresses[*].ip}" | wc -w
+```
+Ez a parancs megszámolja a `my-service` szolgáltatáshoz kapcsolódó elérhető podokat.
+
+#### 4. **`exam-example` Deployment hibája**
+Ha a podok nem indulnak, akkor a `kubectl describe deployment exam-example -n default` paranccsal meg lehet nézni az indítási hibák okát. Valószínűleg nincs elég erőforrás elérhető a kérés teljesítéséhez. Így nézne ki a javított konfiguráció:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: exam-example
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: exam-example
+  template:
+    metadata:
+      labels:
+        app: exam-example
+    spec:
+      containers:
+      - name: exam-example-container
+        image: your-image-name
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+```
+A konfiguráció alkalmazásához:
+```bash
+kubectl apply -f deployment.yaml
+```
+
+### AWS Feladatok
+
+#### 1. **VPC CIDR blokk meghatározása**
+```bash
+aws ec2 describe-vpcs --query "Vpcs[*].CidrBlock" --output table
+```
+
+#### 2. **Elérhető Zónák a VPC-ben**
+```bash
+aws ec2 describe-subnets --query "Subnets[*].AvailabilityZone" --output table
+```
+
+#### 3. **Publikus IP-címek száma a VPC-ben**
+```bash
+aws ec2 describe-addresses --query "Addresses[*].PublicIp" --output table
+```
+
+#### 4. **Publikus/Privát alhálózatok száma**
+```bash
+aws ec2 describe-subnets --query "Subnets[*].MapPublicIpOnLaunch" --output table
+```
+A `true` értékű alhálózatok publikusként vannak jelölve.
+
+#### 5. **Alhálózat CIDR blokkjai**
+```bash
+aws ec2 describe-subnets --query "Subnets[*].CidrBlock" --output table
+```
+
+#### 6. **EC2 hozzáférés vizsgálata privát alhálózatból**
+Ha az EC2 példányhoz tartozó alhálózatnak van NAT Gateway-e vagy NAT instance-a, akkor képes csatlakozni az internethez.
+
+### S3/Lambda/DynamoDB Feladatok
+
+#### 1. **Lambda feltöltése S3 eseményekhez**
+Egy egyszerű Python Lambda függvény:
+```python
+import boto3
+import csv
+import os
+
+def lambda_handler(event, context):
+    s3_client = boto3.client('s3')
+    dynamodb = boto3.resource('dynamodb')
+    table_name = os.environ['TABLE_NAME']
+    table = dynamodb.Table(table_name)
+
+    bucket = event['Records'][0]['s3']['bucket']['name']
+    key = event['Records'][0]['s3']['object']['key']
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    lines = response['Body'].read().decode('utf-8').splitlines()
+    reader = csv.DictReader(lines)
+
+    for row in reader:
+        table.put_item(Item=row)
+    return {"statusCode": 200, "body": "Data inserted successfully"}
+```
+
+#### 2. **Függvény deployálása**
+Használd az AWS CLI-t a Lambda függvény létrehozásához és az S3 trigger konfigurálásához.
+
+### További feladatok
+
+Ha részletes magyarázatra vagy további segítségre van szükség egy adott részhez, jelezd nyugodtan!
+
+
+Az AWS kérdések megválaszolásához az alábbi lépéseket és parancsokat használhatod, hogy minden információt összegyűjts a CloudFormation által létrehozott VPC környezetről:
+
+---
+
+### **1. What is the IPv4 CIDR block of the VPC?**
+```bash
+aws ec2 describe-vpcs --query "Vpcs[*].{VPC:VpcId, CIDR:CidrBlock}" --output table
+```
+Ez a parancs visszaadja az összes VPC azonosítóját (ID) és a CIDR blokkjait.
+
+---
+
+### **2. What Availability Zones does the VPC cover?**
+```bash
+aws ec2 describe-subnets --query "Subnets[*].{Subnet:SubnetId, AZ:AvailabilityZone}" --output table
+```
+Ez a parancs megmutatja, hogy az egyes alhálózatok mely rendelkezésre állási zónákban találhatóak.
+
+---
+
+### **3. How many public IP addresses are used by resources in this VPC?**
+```bash
+aws ec2 describe-addresses --query "Addresses[*].PublicIp" --output json | jq length
+```
+Ez megszámolja az összes használatban lévő nyilvános IP-címet.
+
+---
+
+### **4. How many public/private subnets are in the given VPC?**
+- **Publikus alhálózatok számának lekérdezése**:
+```bash
+aws ec2 describe-subnets --filters "Name=map-public-ip-on-launch,Values=true" --query "Subnets[*].{Subnet:SubnetId}" --output table
+```
+- **Privát alhálózatok számának lekérdezése**:
+```bash
+aws ec2 describe-subnets --filters "Name=map-public-ip-on-launch,Values=false" --query "Subnets[*].{Subnet:SubnetId}" --output table
+```
+
+---
+
+### **5. What are the IPv4 CIDR blocks of the subnets?**
+```bash
+aws ec2 describe-subnets --query "Subnets[*].{Subnet:SubnetId, CIDR:CidrBlock}" --output table
+```
+Ez kilistázza az alhálózatok azonosítóit és CIDR blokkjait.
+
+---
+
+### **6. In what Availability Zone is subnet X?**
+Cseréld le az `X`-et a konkrét alhálózat azonosítójára:
+```bash
+aws ec2 describe-subnets --filters "Name=subnet-id,Values=<SUBNET_ID>" --query "Subnets[*].AvailabilityZone" --output text
+```
+
+---
+
+### **7. What IP addresses/ports are allowed by the ACL of subnet X?**
+Cseréld le az `X`-et az alhálózat azonosítójára:
+```bash
+aws ec2 describe-network-acls --filters "Name=association.subnet-id,Values=<SUBNET_ID>" --query "NetworkAcls[*].Entries[*].{RuleNumber:RuleNumber,Protocol:Protocol,CidrBlock:CidrBlock,PortRange:PortRange}" --output table
+```
+
+---
+
+### **8. Assume that there is an EC2 instance in a private subnet of the VPC, can it access the public internet?**
+Ellenőrizd, hogy van-e **NAT Gateway** vagy **NAT Instance**:
+```bash
+aws ec2 describe-nat-gateways --query "NatGateways[*].{NAT:NatGatewayId,SubnetId:SubnetId}" --output table
+```
+Ha a privát alhálózat a NAT Gatewayhez csatlakozik, akkor az EC2 példány hozzáférhet az internethez.
+
+---
+
+### **9. What IP addresses/ports are allowed in the security group attached to EC2 instance X?**
+Cseréld le az `X`-et az EC2 példány azonosítójára, hogy megtaláld a hozzárendelt biztonsági csoportot:
+```bash
+aws ec2 describe-instances --instance-ids <INSTANCE_ID> --query "Reservations[*].Instances[*].SecurityGroups[*].{SGId:GroupId, SGName:GroupName}" --output table
+```
+Ezután nézd meg a biztonsági csoport szabályait:
+```bash
+aws ec2 describe-security-groups --group-ids <SECURITY_GROUP_ID> --query "SecurityGroups[*].IpPermissions[*].{Protocol:IpProtocol, From:FromPort, To:ToPort, CIDR:IpRanges}" --output table
+```
+
+---
+
+### **10. Analyze the instance role of the EC2 instance X.**
+Az `instance profile` és a kapcsolódó IAM szerep megtekintése:
+```bash
+aws ec2 describe-instances --instance-ids <INSTANCE_ID> --query "Reservations[*].Instances[*].IamInstanceProfile.Arn" --output text
+```
+Ezután az IAM szerephez tartozó jogosultságokat ellenőrizd:
+```bash
+aws iam get-role --role-name <ROLE_NAME>
+```
+
+---
+
+Ezekkel a lépésekkel pontosan megválaszolhatók az AWS Academy Learner Lab környezetben feltett kérdések. Ha bármelyik lépéshez részletesebb magyarázatra vagy példára van szükséged, jelezd!
+
+
+Az **AWS Step Functions** feladatokhoz a következő lépéseket kell végrehajtani. Minden feladat megoldására konkrét AWS CLI parancsokat vagy konzolon végrehajtandó műveleteket adok.
+
+---
+
+### **1. How many steps are in the Step Function workflow?**
+A Step Function lépések számának meghatározásához az alábbi AWS CLI parancsot használhatod:
+```bash
+aws stepfunctions describe-state-machine --state-machine-arn <STATE_MACHINE_ARN> --query "stateMachineDefinition.States" --output json | jq '. | length'
+```
+- **`<STATE_MACHINE_ARN>`**: A Step Function ARN-je, amelyet a CloudFormation hozott létre. Ezt az AWS Management Console-on keresztül találhatod meg a Step Functions szolgáltatás alatt.
+
+Ez a parancs lekéri a `States` mezőt a Step Function definíciójából, és megszámolja a benne lévő lépéseket.
+
+---
+
+### **2. From start to end, give the types of the steps as a comma-separated list.**
+A lépések típusait az AWS CLI segítségével listázhatod:
+```bash
+aws stepfunctions describe-state-machine --state-machine-arn <STATE_MACHINE_ARN> --query "stateMachineDefinition.States" --output json | jq 'keys | .[] as $key | "\($key): \(.[$key].Type)"'
+```
+Ez a parancs az állapotgép minden lépésének nevét és típusát adja meg. Az eredményt alakítsd át vesszővel elválasztott listává, például: `Task, Choice, Wait, Succeed`.
+
+---
+
+### **3. Given a specific test input, what is the output?**
+1. **Indítsd el a Step Function-t teszt bemenettel**:
+   ```bash
+   aws stepfunctions start-execution --state-machine-arn <STATE_MACHINE_ARN> --input '{"key1": "value1", "key2": "value2"}'
+   ```
+   - A `--input` paraméterrel kell megadnod a teszt bemenetet JSON formátumban.
+
+2. **Figyeld a végrehajtás állapotát**:
+   ```bash
+   aws stepfunctions describe-execution --execution-arn <EXECUTION_ARN>
+   ```
+   - Az `EXECUTION_ARN` értéket az előző parancs kimenetében találod.
+
+3. **A kimenet megtekintése**:
+   ```bash
+   aws stepfunctions get-execution-history --execution-arn <EXECUTION_ARN> --query "events[?type=='ExecutionSucceeded'].executionSucceededEventDetails.output" --output text
+   ```
+   Ez a parancs megadja a végrehajtás sikeres kimenetét.
+
+---
+
+### **4. Analyze the Lambda functions making up the workflow.**
+A Step Function definíciójában minden egyes **Task State** által használt Lambda függvényt meg kell nézni.
+
+1. **Lekérdezés a Step Function definíciójából**:
+   ```bash
+   aws stepfunctions describe-state-machine --state-machine-arn <STATE_MACHINE_ARN> --query "stateMachineDefinition.States" --output json
+   ```
+   - Keresd meg a `Resource` mezőt, amely tartalmazza a Lambda függvény ARN-jét.
+
+2. **A Lambda függvény vizsgálata**:
+   ```bash
+   aws lambda get-function --function-name <LAMBDA_FUNCTION_NAME>
+   ```
+   - Ez a parancs visszaadja a Lambda függvény részleteit, például runtime, memória és időkorlát beállításokat.
+
+---
+
+### **5. Modify the workflow to give a different output based on a given specification.**
+A Step Function-t a JSON definíciójának módosításával lehet megváltoztatni.
+
+1. **A jelenlegi definíció letöltése**:
+   ```bash
+   aws stepfunctions describe-state-machine --state-machine-arn <STATE_MACHINE_ARN> --query "stateMachineDefinition" --output json > state_machine.json
+   ```
+
+2. **A JSON fájl szerkesztése**:
+   Nyisd meg a `state_machine.json` fájlt, és módosítsd a lépéseket vagy a tranzíciókat az új specifikációnak megfelelően.
+
+3. **A módosított definíció feltöltése**:
+   ```bash
+   aws stepfunctions update-state-machine --state-machine-arn <STATE_MACHINE_ARN> --definition file://state_machine.json
+   ```
+
+---
+
+### **6. Run an external evaluator script that validates your modifications.**
+A feladat végén futtasd le a külső értékelő szkriptet, amelyet a feladat adatai között találsz. Ennek pontos használatát általában a feladat leírása tartalmazza. Példa lehet egy Python script futtatása:
+```bash
+python validate_workflow.py --state-machine-arn <STATE_MACHINE_ARN>
+```
+Győződj meg arról, hogy minden szükséges függőség telepítve van, és a script az elvárásoknak megfelelően fut.
+
+---
+
+Ha további segítségre van szükséged a JSON definíciók módosításában vagy a Lambda függvények testreszabásában, jelezd!
+
